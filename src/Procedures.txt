@@ -1,0 +1,162 @@
+CREATE DEFINER=`root`@`localhost` PROCEDURE `bank_account_pending`()
+BEGIN
+	SELECT ba.account_id AS 'Account #', c.firstname AS 'Customer Name',  ba.account_name AS 'Account Name',
+    ba.balance AS 'Balance', ba.status AS 'STATUS', ba.approver_id AS 'Approver', created
+    FROM bank_accounts AS ba
+    INNER JOIN customers AS c ON c.id=ba.customer_id
+    WHERE status='Pending';
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `change_account_status`(IN status1 varchar(100), IN approvedby int, IN accountnum int)
+BEGIN
+UPDATE bank_accounts SET status=status1, approver_id=approvedby WHERE account_id=accountnum AND status='Pending';
+END
+
+-----
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `create_bank_account`(IN cust_id int,IN acc_name varchar(100),IN deposit double)
+BEGIN
+DECLARE acc_id int;
+	IF (deposit >= 0)
+		THEN
+			INSERT INTO bank_accounts (customer_id, account_name, balance, created) VALUES (cust_id, acc_name, deposit, NOW());
+			IF EXISTS(SELECT * FROM bank_accounts WHERE customer_id=cust_id AND account_name=acc_name)
+				THEN
+					SET acc_id = (SELECT account_id FROM bank_accounts WHERE customer_id=cust_id AND account_name=acc_name);
+					INSERT INTO transactions (from_acc, amount, trans_type, status) VALUES (acc_id, deposit, 'Opening Account Deposit', 'Approved');
+			END IF;
+	END IF;
+END
+
+----------------------------------------------------------------------------------------------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `create_emp_account`(IN firstname1 varchar(50), IN email1 varchar(200), IN pword varchar(200))
+BEGIN
+INSERT INTO employees (firstname, email, password) VALUES (firstname1, email1, SHA2(pword,224));
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `decide_transfer`(IN cust_id int, IN trans_num int, IN status1 varchar(100))
+BEGIN
+DECLARE amount1 double;
+DECLARE accountNumber int;
+DECLARE returnToSender int;
+	IF EXISTS(SELECT * FROM bank_accounts as b INNER JOIN transactions AS t ON t.to_acc=b.account_id WHERE t.status='Pending' AND b.customer_id=cust_id AND t.trans_id=trans_num)
+		THEN
+			IF (status1 <=> 'Approved' )
+				THEN
+					SET amount1 = (SELECT amount FROM transactions WHERE trans_id=trans_num);
+                    SET accountNumber = (SELECT t.to_acc FROM bank_accounts as b INNER JOIN transactions AS t ON t.to_acc=b.account_id WHERE b.customer_id=cust_id AND t.trans_id=trans_num);
+					UPDATE transactions SET status=status1 WHERE status='Pending' AND trans_id=trans_num;
+					UPDATE bank_accounts SET balance=balance+amount1 WHERE customer_id=cust_id AND account_id=accountNumber;
+			ELSEIF (status1 <=> 'Denied')
+				THEN
+					SET amount1 = (SELECT amount FROM transactions WHERE trans_id=trans_num);
+                    SET accountNumber =(SELECT t.from_acc FROM bank_accounts as b INNER JOIN transactions AS t ON t.from_acc=b.account_id WHERE b.account_id=t.from_acc AND t.trans_id=trans_num);
+                    SET returnToSender = (SELECT b.customer_id FROM bank_accounts as b INNER JOIN transactions AS t ON t.from_acc=b.account_id WHERE b.account_id=t.from_acc AND t.trans_id=trans_num);
+					UPDATE transactions SET status=status1 WHERE status='Pending' AND trans_id=trans_num;
+					UPDATE bank_accounts SET balance=balance+amount1 WHERE customer_id=returnToSender AND account_id=accountNumber;
+			END IF;
+	END IF;
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `deposit_transactions`(IN account_num int, IN d_amount double, IN cust_id int)
+BEGIN
+IF EXISTS(SELECT * FROM bank_accounts WHERE account_id=account_num AND customer_id=cust_id AND status='Approved')
+	THEN
+		UPDATE bank_accounts SET balance=balance+d_amount WHERE customer_id=(SELECT customer_id WHERE account_id=account_num AND customer_id=cust_id AND status='Approved') AND account_id=account_num;
+		INSERT INTO transactions (from_acc, amount, trans_type, status) VALUES (account_num, d_amount, 'Deposit', 'Approved');
+    END IF;
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `login_employee`(IN email1 varchar(200), IN pword varchar(200))
+Begin
+SELECT * FROM employees WHERE email=email1 AND password=sha2(pword, 224);
+END
+
+----------------------------------------------------------------------------------------------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `login_employee`(IN email1 varchar(200), IN pword varchar(200))
+Begin
+SELECT * FROM employees WHERE email=email1 AND password=sha2(pword, 224);
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `transactions_view`(IN transType varchar(50), IN status1 varchar(50), IN accNum int, IN cust_id int)
+BEGIN
+	IF EXISTS(SELECT * FROM bank_accounts WHERE account_id=accNum AND customer_id=cust_id)
+		Then
+			IF (transType <=> 'Transfer')
+				Then
+					SELECT * FROM Transactions WHERE trans_type like 'Transfer%' AND status=status1 AND (from_acc=accNum OR to_acc=accNum);
+			ELSEIF (transtype <=> 'Opening')
+				Then
+					SELECT * FROM Transactions WHERE trans_type like 'Opening%' AND status=status1 AND (from_acc=accNum OR to_acc=accNum);
+			ELSEIF (transType <=> 'Deposit')
+				Then
+					SELECT * FROM Transactions WHERE trans_type like 'Deposit%' AND status=status1 AND (from_acc=accNum OR to_acc=accNum);
+            ELSEIF (transType <=> 'Withdrew')
+				Then
+					SELECT * FROM Transactions WHERE trans_type like 'Withdrew%' AND status=status1 AND (from_acc=accNum OR to_acc=accNum);
+			ELSEIF (transType <=> 'All')
+				Then
+					SELECT * FROM Transactions WHERE from_acc=accNum OR to_acc=accNum;
+			END IF;
+    END IF;
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `transfer_to_account`(IN from_acc_num int,In to_acc_num int, IN t_amount double, In cust_id int)
+BEGIN
+	IF EXISTS(SELECT * FROM bank_accounts WHERE balance >= t_amount AND customer_id=cust_id AND account_id=from_acc_num AND status='Approved')
+		THEN
+			IF EXISTS(SELECT * FROM bank_accounts WHERE account_id=to_acc_num AND customer_id=cust_id AND status='Approved')
+				THEN
+					UPDATE bank_accounts SET balance=balance-t_amount  WHERE account_id=from_acc_num AND customer_id=cust_id;
+					UPDATE bank_accounts SET balance=balance+t_amount  WHERE account_id=to_acc_num AND customer_id=cust_id;
+					INSERT INTO transactions (from_acc, amount, to_acc, trans_type, status) VALUES (from_acc_num, t_amount, to_acc_num, 'Transfer Internally', 'Approved');
+			ELSEIF EXISTS (SELECT * FROM bank_accounts WHERE account_id=to_acc_num AND status='Approved')
+				THEN
+					UPDATE bank_accounts SET balance=balance-t_amount  WHERE account_id=from_acc_num AND customer_id=cust_id;
+					INSERT INTO transactions (from_acc, amount, to_acc, trans_type, status) VALUES (from_acc_num, t_amount, to_acc_num, 'Transfer Externally', 'Pending');
+            END IF;
+	END IF;
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `view_customer_bank_accounts`(IN cust_id int)
+BEGIN
+SELECT account_id, account_name, balance, status, created
+FROM bank_accounts
+WHERE customer_id=cust_id;
+END
+
+----
+CREATE DEFINER=`root`@`localhost` PROCEDURE `view_selected_bank_accounts`(IN cust_id int, IN acc_num int)
+BEGIN
+SELECT account_id, account_name, balance, status, created
+FROM bank_accounts
+WHERE customer_id=cust_id AND account_id=acc_num;
+END
+
+----------------------------------------------------------------------------------------------------------------------
+
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `withdraw_transactions`(IN account_num int, IN d_amount double, IN cust_id int)
+BEGIN
+IF EXISTS(SELECT * FROM bank_accounts WHERE account_id=account_num AND customer_id=cust_id AND status='Approved' AND balance >= d_amount)
+	THEN
+		UPDATE bank_accounts SET balance=balance-d_amount WHERE customer_id=(SELECT customer_id WHERE account_id=account_num AND customer_id=cust_id AND status='Approved') AND account_id=account_num AND balance >= d_amount;
+		INSERT INTO transactions (from_acc, amount, trans_type, status) VALUES (account_num, -d_amount, 'Withdrew', 'Approved');
+    END IF;
+END
+
